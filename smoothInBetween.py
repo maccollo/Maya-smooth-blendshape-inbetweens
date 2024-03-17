@@ -1,5 +1,6 @@
 import maya.cmds as cmds
-
+from time import time
+from maya.api import OpenMaya as om
 ### linear algebra code from https://integratedmlai.com/system-of-equations-solution/
 def print_matrix(Title, M):
     print(Title)
@@ -131,7 +132,7 @@ def evaluate_spline(x, a, b, c, d, x_points):
                 break
     return result
 def calculate_quadratic_coefficients_oneDimention(y0, y1, y2, w0, w1,w2):
-
+    """Calculate the coefficients of a quadratic function that passes through the points (w0,y0), (w1,y1) and (w2, y2)."""
     a_val = (y2*(w0-w1) + y1*(w2-w0) + y0*(w1-w2))/ (w0-w2) / (w1-w2) / (w0-w1)
     b_val = (y2*(w1**2 - w0**2) + y1*( w0**2 - w2**2) + y0*(w2**2 -w1**2)) / (w0 - w2)/(w1 - w2)/(w0 - w1) 
     c_val = (y0*(-w2 + w1)*w1 + w0*(y1 - w1**2*y2 + w0*(-y1 + w1*y2)))/((-w2 + w1)*w1 + w0*(w2 + w0*(-w2 + w1) - w1**2))
@@ -186,7 +187,6 @@ def calculate_quadratic_coefficients(base_pos, inbetween_pos, target_pos, base_w
     w0 = base_weight_value
     w1 = inbetween_weight
     w2 = end_weight
-    print(base_pos)
     # Calculate a and b using the derived formulas
     for y0, y1, y2 in zip(base_pos, inbetween_pos, target_pos):
         a_val = (y2*(w0-w1) + y1*(w2-w0) + y0*(w1-w2))/ (w0-w2) / (w1-w2) / (w0-w1)
@@ -201,6 +201,7 @@ def lerp(v0, v1, t):
     return (1 - t) * v0 + t * v1
 
 def create_inbetween_shapes(base_shape,vertexPositions, weights, num_inbetweens):
+    start_time = time()
     if len(weights) < 3:
         #STOP
         print("2 points dont make no curve!")
@@ -208,12 +209,52 @@ def create_inbetween_shapes(base_shape,vertexPositions, weights, num_inbetweens)
     print(weights)
     if len(weights) == 3:
         #Since we only have 3 pointss we can use a quadratic curve
-        return create_inbetween_shapes_quadratic(base_shape, vertexPositions, weights, num_inbetweens)
+        return create_inbetween_shapes_quadratic_optimized(base_shape, vertexPositions, weights, num_inbetweens)
     # ITs CUBIC TIME
     print("4 or more points make for a cubic curve!")
-    return create_inbetween_shapes_natural_cubic(base_shape, vertexPositions, weights, num_inbetweens)
+    return create_inbetween_shapes_natural_cubic_optimized(base_shape, vertexPositions, weights, num_inbetweens)
     
+def create_inbetween_shapes_natural_cubic_optimized(base_shape, vertexPositions, weights, num_inbetweens):
+    num_vertices = int(len(vertexPositions[0]) / 3)
 
+    # Pre-calculate the cubic spline coefficients for all vertices and dimensions
+    spline_coeffs_x = []
+    spline_coeffs_y = []
+    spline_coeffs_z = []
+
+    for vtx_id in range(num_vertices):
+        # Extract positions for current vertex across all weights
+        x_positions = [vertexPositions[wi][vtx_id * 3] for wi in range(len(weights))]
+        y_positions = [vertexPositions[wi][vtx_id * 3 + 1] for wi in range(len(weights))]
+        z_positions = [vertexPositions[wi][vtx_id * 3 + 2] for wi in range(len(weights))]
+
+        # Calculate and store spline coefficients for x, y, z
+        spline_coeffs_x.append(calculate_natural_cubic_spline_coefficients_with_quadratic_end(weights, x_positions))
+        spline_coeffs_y.append(calculate_natural_cubic_spline_coefficients_with_quadratic_end(weights, y_positions))
+        spline_coeffs_z.append(calculate_natural_cubic_spline_coefficients_with_quadratic_end(weights, z_positions))
+
+    shapes = []
+    weights_for_inbetweens = [lerp(min(weights), max(weights), i / float(num_inbetweens + 1)) for i in range(1, num_inbetweens + 1)]
+
+    for weight in weights_for_inbetweens:
+        new_shape = cmds.duplicate(base_shape, name=f'inbetween_{weight}')[0]
+        new_positions = []
+
+        for vtx_id in range(num_vertices):
+            # Evaluate splines at the current in-between weight for x, y, z
+            new_x_position = evaluate_spline(weights, *spline_coeffs_x[vtx_id], [weight])[0]
+            new_y_position = evaluate_spline(weights, *spline_coeffs_y[vtx_id], [weight])[0]
+            new_z_position = evaluate_spline(weights, *spline_coeffs_z[vtx_id], [weight])[0]
+
+            # Store new position for later bulk update
+            new_positions.append([new_x_position, new_y_position, new_z_position])
+
+        # Bulk update vertex positions using the optimized approach
+        set_vertex_positions_with_openmaya(new_shape, new_positions)
+            
+        shapes.append(new_shape)
+
+    return weights_for_inbetweens, shapes
 def create_inbetween_shapes_natural_cubic(base_shape, vertexPositions, weights, num_inbetweens):
     # Assuming calculate_natural_cubic_spline_coefficients is already defined
     # The number of vertices
@@ -225,14 +266,13 @@ def create_inbetween_shapes_natural_cubic(base_shape, vertexPositions, weights, 
     
     for weight in weights_for_inbetweens:
         new_shape = cmds.duplicate(base_shape, name=f'inbetween_{weight}')[0]
-        
+        new_positions = []
         for vtx_id in range(num_vertices):
             # Extract x, y, z coordinates for the current vertex across all weights
             x_positions = [vertexPositions[wi][vtx_id*3] for wi in range(len(weights))]
             
             y_positions = [vertexPositions[wi][vtx_id*3 + 1] for wi in range(len(weights))]
             z_positions = [vertexPositions[wi][vtx_id*3 + 2] for wi in range(len(weights))]
-            print(y_positions)
             # Calculate spline coefficients for x, y, z
             x_coeffs = calculate_natural_cubic_spline_coefficients_with_quadratic_end(weights, x_positions)
             y_coeffs = calculate_natural_cubic_spline_coefficients_with_quadratic_end(weights, y_positions)
@@ -242,13 +282,63 @@ def create_inbetween_shapes_natural_cubic(base_shape, vertexPositions, weights, 
             new_x_position = evaluate_spline(weights, x_coeffs[0], x_coeffs[1], x_coeffs[2], x_coeffs[3], [weight])[0]
             new_y_position = evaluate_spline(weights, y_coeffs[0], y_coeffs[1], y_coeffs[2], y_coeffs[3], [weight])[0]
             new_z_position = evaluate_spline(weights, z_coeffs[0], z_coeffs[1], z_coeffs[2], z_coeffs[3], [weight])[0]
-
+            new_positions.append([new_x_position, new_y_position, new_z_position])
             # Move vertex to the new position
-            cmds.xform(f'{new_shape}.vtx[{vtx_id}]', t=(new_x_position, new_y_position, new_z_position), ws=True)
+        #cmds.xform(f'{new_shape}.vtx[{vtx_id}]', t=(new_x_position, new_y_position, new_z_position), ws=True)
+        set_vertex_positions_with_openmaya(new_shape,new_positions)
             
         shapes.append(new_shape)
 
     return weights_for_inbetweens, shapes
+def get_skip_list(base_positions, inbetween_positions, target_positions):
+    #If all three positions have the same x y and z coordinates we can skip the calculation
+    skip_list = []
+    for base, inbetween, target in zip(base_positions, inbetween_positions, target_positions):
+        if base[0] == inbetween[0] == target[0] and base[1] == inbetween[1] == target[1] and base[2] == inbetween[2] == target[2]:
+            skip_list.append(True)
+        else:
+            skip_list.append(False)
+    return skip_list
+def set_vertex_positions_with_openmaya(mesh_name, new_positions):
+    selectionList = om.MSelectionList()
+    selectionList.add(mesh_name)
+    dagPath = selectionList.getDagPath(0)
+
+    mfnMesh = om.MFnMesh(dagPath)
+    points = om.MPointArray()
+
+    for pos in new_positions:
+        points.append(om.MPoint(pos[0], pos[1], pos[2]))
+
+    mfnMesh.setPoints(points)
+def create_inbetween_shapes_quadratic_optimized(base_shape, vertexPositions, weights, num_inbetweens):
+    #debug the time it takes to calculate the inbetweens
+    base_positions = [vertexPositions[0][i:i+3] for i in range(0, len(vertexPositions[0]), 3)]
+    inbetween_positions = [vertexPositions[1][i:i+3] for i in range(0, len(vertexPositions[1]), 3)]
+    target_positions = [vertexPositions[2][i:i+3] for i in range(0, len(vertexPositions[2]), 3)]
+    skip_list = get_skip_list(base_positions, inbetween_positions, target_positions)
+    base_weight = weights[0]
+    inbetween_weight = weights[1]
+    end_weight = weights[2]
+    #print("GOTHERE")
+    #print(skip_list)
+    # Pre-calculate coefficients for all vertices
+    coeffs = [calculate_quadratic_coefficients(base_pos, inbetween_pos, target_pos, base_weight, inbetween_weight, end_weight) 
+              for base_pos, inbetween_pos, target_pos in zip(base_positions, inbetween_positions, target_positions)]
+    weightsInterpolated = [lerp(base_weight, end_weight, i / float(num_inbetweens + 1)) for i in range(1, num_inbetweens + 1)]
+    shapes = []
+
+    for weight in weightsInterpolated:
+        new_shape = cmds.duplicate(base_shape, name=f'inbetween_{weight}')[0]
+        new_positions = []
+        for vtx_id, (a, b, c) in enumerate(coeffs):
+            new_positions.append([a[j]*(weight**2) + b[j]*weight + c[j] for j in range(3)])
+            
+            # Move vertices to new positions
+            #This is slow as fuck
+        set_vertex_positions_with_openmaya(new_shape,new_positions)
+        shapes.append(new_shape)
+    return weightsInterpolated, shapes
 def create_inbetween_shapes_quadratic(base_shape,vertexPositions, weights, num_inbetweens):
     # Retrieve vertex positions for base, inbetween, and target
     #the positions are the offsets from base so we need to sum them with the base coordinates to get the true positions
@@ -268,7 +358,6 @@ def create_inbetween_shapes_quadratic(base_shape,vertexPositions, weights, num_i
     shapes = []
     for i in range(1, num_inbetweens + 1):
         weight =lerp(base_weight, end_weight, i / float(num_inbetweens + 1))
-        print(weight)
         new_shape = cmds.duplicate(base_shape, name=f'inbetween_{i}')[0]
         
         for vtx_id in range(len(base_positions)):
@@ -318,7 +407,6 @@ def get_blendshape_target_names(blendshape_node):
 
     for target in targets:
         targetNames.append(target)
-    print(targetNames)
     return targetNames
 
 def get_blendShape_target_connections(blendshape_node):
@@ -330,8 +418,6 @@ def get_blendShape_target_connections(blendshape_node):
         outgoing = cmds.listConnections(blendshape_node + '.' + target, source=False, destination=True, plugs=True)
         target_connection_in.append(incoming)
         target_connection_out.append(outgoing)
-    print(target_connection_in)
-    print(target_connection_out)
     return target_connection_in, target_connection_out
 
 def break_blendShape_target_connections(blendshape_node):   
@@ -374,9 +460,6 @@ def find_inbetween_weights(blendshape_node, target_name):
     if target_index is not None:
         inbetween_weights, inbetween_items,target_item = find_inbetween_weights2(blendshape_node, target_index)
         if inbetween_weights:
-            print(inbetween_weights)
-            print(inbetween_items)
-            print(target_item)
             return inbetween_weights, inbetween_items,target_item,target_index
     return None
 
@@ -386,8 +469,6 @@ def apply_inbetweens_to_blendshape(blendshape_node, base_shape,base_shape_copy, 
     and applies them to the specified blendshape target.
     """
     inbetween_weights, inbetween_items,target_item,target_index = find_inbetween_weights(blendshape_node, target_name)
-    print(inbetween_weights)
-    print(inbetween_items)
     vertexPositions = []
     weights = []
     BaseMeshPositions = cmds.xform(f'{base_shape_copy}.vtx[*]', q=True, t=True, ws=True)
@@ -403,11 +484,12 @@ def apply_inbetweens_to_blendshape(blendshape_node, base_shape,base_shape_copy, 
             Positions = [BaseMeshPositions[i] + Positions[i] for i in range(len(BaseMeshPositions))]
             vertexPositions.append(Positions)
             weights.append(weight)
-        print("WEIGHTS")
-        print(weights)
         target_shape = f'{target_name}_target'
         # Calculate and create new inbetweens
+        time_start = time()
         weights, shapes = create_inbetween_shapes(base_shape_copy,vertexPositions, weights, num_inbetweens)
+        time_end = time()
+        print("Time to calculate inbetweens: ", time_end - time_start)
         add_inbetween_to_blendshape(base_shape,blendshape_node, target_name, shapes, weights,target_index)
         cmds.delete(shapes)
         # Apply new inbetweens to the blendshape node
@@ -444,7 +526,6 @@ def extract_inbetween_positions(blendshape_node,base_shape, target_index, inbetw
         for index in indices:
             full_positions[index] = list(modified_positions[current_modified_index])
             current_modified_index += 1
-    print(full_positions)
     return full_positions
 def find_inbetween_weights2(blendshape_node, target_index):
     """
@@ -464,23 +545,16 @@ def find_inbetween_weights2(blendshape_node, target_index):
                 inbetween_items.append(item)
             if weight == 1:
                 target_item = item
-    print(inbetween_weights)
     
     return inbetween_weights, inbetween_items, target_item
 def add_inbetween_to_blendshape(base_shape,blendshape_node, target_name, new_shapes, weights,target_index):
     """
     Adds a new inbetween shape to the specified blendshape target at the given weight.
     """
-    # Find the index of the target shape in the blendShape node
-    print(target_index)
-    #target_index = cmds.blendShape(blendshape_node, query=True, target=True).index(target_name)
-    print(target_index)
     for new_shape, weight in zip(new_shapes, weights):
     # Add the new shape as an inbetween at the specified weight
         #round the weight to 3 decimal places
         rounded_weight = round(weight, 3)
-        print(rounded_weight)
-        print(new_shape)
         cmds.blendShape(blendshape_node, edit=True, target=(base_shape, target_index, new_shape, rounded_weight), inBetween=True)
 
 def get_blendshape_nodes():
@@ -503,10 +577,11 @@ def apply_inbetweens(*args):
     target_name = cmds.optionMenu("targetMenu", query=True, value=True)
     num_inbetweens = int(cmds.textField("numInbetweensField", query=True, text=True))
     base_shape = get_base_shape_from_blendshape(blendshape_node)
-    print(base_shape)
     base_shape_no_deformation = duplicate_without_deformation(base_shape,blendshape_node)[0]
-    print(base_shape_no_deformation)
-    print("WAT")
+    #reset the transforms of the base shape
+    cmds.setAttr(base_shape_no_deformation + '.translate', 0,0,0)
+    cmds.setAttr(base_shape_no_deformation + '.rotate', 0,0,0)
+    cmds.setAttr(base_shape_no_deformation + '.scale', 1,1,1)
     apply_inbetweens_to_blendshape(blendshape_node,base_shape, base_shape_no_deformation, target_name, num_inbetweens)
     cmds.delete(base_shape_no_deformation)
     cmds.inViewMessage(amg=f'Inbetweens generated for {target_name}.', pos='midCenter', fade=True)
@@ -517,7 +592,13 @@ def get_base_shape_from_blendshape(blendshape_node):
     # Find the geometry connected as input to the blendshape node
     connections = cmds.listConnections(blendshape_node + '.outputGeometry', source=False, destination=True)
     if connections:
-        return connections[0]
+        #check if the connection is a shape node
+        for connection in connections:
+            if cmds.nodeType(connection) == 'transform':
+                return connection
+            else:
+                #If not we continue to the next connection
+                return get_base_shape_from_blendshape(connection)
 
     else:
         cmds.warning("No base shape found for blendshape node: " + blendshape_node)
