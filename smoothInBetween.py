@@ -3,7 +3,7 @@ from time import time
 from maya.api import OpenMaya as om
 ### linear algebra code from https://integratedmlai.com/system-of-equations-solution/
 class LinAlgMatrix:
-    "Wrapper class for the functions from https://integratedmlai.com/system-of-equations-solution/ in a class"
+    "Wrapper class for the functions from https://integratedmlai.com/system-of-equations-solution/"
     @staticmethod
     def print_matrix(Title, M):
         print(Title)
