@@ -1,5 +1,4 @@
 import maya.cmds as cmds
-from time import time
 from maya.api import OpenMaya as om
 ### linear algebra code from https://integratedmlai.com/system-of-equations-solution/
 class LinAlgMatrix:
@@ -114,10 +113,9 @@ class Spline:
             self.a, self.b, self.c, self.d = [0], [a], [b], [c]
             self.x = [x[0], x[-1]]
     def calculate_quadratic_coefficients(self,x,y):
-        """Calculate the coefficients of a quadratic function that passes through the points (w0,y0), (w1,y1) and (w2, y2)."""
+        """Calculate the coefficients of a quadratic function that passes through the points (x0,y0), (x1,y1) and (x2, y2)."""
         y0,y1, y2 = y[0], y[1], y[2]
         x0, x1, x2 = x[0], x[1], x[2]
-        print(x0, x1, x2)
         a_val = (y2*(x0-x1) + y1*(x2-x0) + y0*(x1-x2))/ (x0-x2) / (x1-x2) / (x0-x1)
         b_val = (y2*(x1**2 - x0**2) + y1*( x0**2 - x2**2) + y0*(x2**2 -x1**2)) / (x0 - x2)/(x1 - x2)/(x0 - x1) 
         c_val = (y0*(-x2 + x1)*x1 + x0*(y1 - x1**2*y2 + x0*(-y1 + x1*y2)))/((-x2 + x1)*x1 + x0*(x2 + x0*(-x2 + x1) - x1**2))
@@ -140,8 +138,6 @@ class Spline:
         """Generates the coefficients for a natural cubic spline where the boundary condition is that the derivative at the end points is equal to the derivative of a quadratic function passing through the first 3 and last 3 points."""
         n = len(x) - 1
         h = [x[i+1] - x[i] for i in range(n)]
-        print(x)
-        print(y)
         # Calculate quadratic coefficients for boundary conditions
         a0, b0, _ = self.calculate_quadratic_coefficients([x[0], x[1], x[2]], [y[0], y[1], y[2]])
         an, bn, _ = self.calculate_quadratic_coefficients([x[n-2], x[n-1], x[n]], [y[n-2], y[n-1], y[n]])
@@ -300,10 +296,9 @@ class Inbetweener:
         for i, alias in enumerate(alias_list):
             if alias == target_name:
                 target_index = i // 2  # Each target has two entries in the alias list (weight and input)
-                print("Target name found")
                 return target_index
-        print("Target name not found")
-        return None
+        #rise error if the target is not found
+        raise ValueError(f"Target {target_name} not found in blendshape node {blendshape_node}.")
     
     @staticmethod
     def find_inbetween_weights_from_target_name(blendshape_node, target_name):
@@ -339,10 +334,7 @@ class Inbetweener:
                 weights.append(weight)
             target_shape = f'{target_name}_target'
             # Calculate and create new inbetweens
-            time_start = time()
             weights, shapes = Inbetweener.create_inbetween_shapes(base_shape_copy,vertex_positions, weights, num_inbetweens)
-            time_end = time()
-            print("Time to calculate inbetweens: ", time_end - time_start)
             Inbetweener.add_inbetween_to_blendshape(base_shape,blendshape_node, target_name, shapes, weights,target_index)
             cmds.delete(shapes)
             # Apply new inbetweens to the blendshape node
